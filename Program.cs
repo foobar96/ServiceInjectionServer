@@ -6,7 +6,8 @@ using System.Reflection;
 var builder = WebApplication.CreateBuilder(args);
 
 // Additional AppSettings
-builder.Configuration.AddJsonFile("appsettings.Testing.json", optional: true, reloadOnChange: false);
+if(builder.Environment.IsEnvironment("Testing"))
+    builder.Configuration.AddJsonFile("appsettings.Testing.json", optional: true, reloadOnChange: false);
 
 // Add services to the container.
 
