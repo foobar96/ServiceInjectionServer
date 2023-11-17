@@ -17,25 +17,11 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 
-// builder.Services.AddScoped<SampleService>();
-// builder.Services.AddSingleton<PeriodicHostedService>();
-// builder.Services.AddSingleton<PeriodicHostedService>();
-// builder.Services.AddHostedService(
-//     provider => provider.GetRequiredService<PeriodicHostedService>());
-// builder.Services.AddHostedService(
-//     provider => provider.GetRequiredService<PeriodicHostedService>());
-
-// builder.Services.AddHostedService<MyBackgroundService>();
-// builder.Services.AddHostedService<MyBackgroundService>();
-
-
-
-
 
 
 var app = builder.Build();
 
-await BuildBackgroundServicesFromAppSettings();
+await BuildBackgroundServicesFromAppSettings(app);
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
@@ -43,28 +29,13 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-// var service = new GreeterService("Api");
-// var cancelToken = new CancellationToken();
-// service.StartAsync(cancelToken);
 
-// app.MapGet("/Greeter", () => {return service.GetType().ToString();} );
 
-app.MapMethods($"/addservice", new[] { "PATCH" }, async (
+app.MapMethods($"/service", new[] { "PATCH" }, async (
                 PeriodicHostedServiceState state
                 ) =>
                 {
-
-                    Console.WriteLine("Hellohello");
-                    if(state.NewService is not null)
-                    {
-                        Console.WriteLine("Letsbuildit");
-                        // for(int i = 0; i < state.NewService.ConstructorArgument.Length; i++)
-                        // {
-                        //     state.NewService.ConstructorArgument[i] = state.NewService.ConstructorArgument[i].ToString(); // Actually necessary or Activator will not know that there are strings in the object[]
-                        // }
-                        await BuildServiceFromDescription(state.NewService);
-                    }
-                        
+                    return await HandlePatchServiceRequest(state);                       
                 });
 
 //app.UseHttpsRedirection();
@@ -77,7 +48,7 @@ app.Run();
 
 
 
-async Task BuildBackgroundServicesFromAppSettings()
+async Task BuildBackgroundServicesFromAppSettings(WebApplication app)
 {
 
     var arr = builder.Configuration.GetSection("Services").Get<List<ServiceDescription>>();
@@ -90,25 +61,8 @@ async Task BuildBackgroundServicesFromAppSettings()
             (var typeInstance, var myType, var cancelToken) = await BuildServiceFromDescription(arr[i]);
 
 
-            // Some mapping just for remote control and to justify trying this in a webapi project
-
-            // Map the termination of the services
-            // curl --location --request PATCH 'http://localhost:5048/service/0' --header 'Content-Type: application/json' --data-raw '{"RequestTermination": true}'
-            app?.MapMethods($"/service/{i}", new[] { "PATCH" }, async (
-                PeriodicHostedServiceState state
-                ) =>
-                {
-                    if(state.RequestTermination)
-                    {
-                        MethodInfo? stopMethod = myType.GetMethod("StopAsync");
-                        stopMethod?.Invoke(typeInstance, new object[] {cancelToken});
-                    }
-                        
-                });
-
-            // Map Service Info GET returns the assembly type
-            // curl http://localhost:5048/service/0
-            app?.MapGet($"/service/{i}", () => { MethodInfo? typeMethode = myType.GetMethod("GetType"); return typeMethode?.Invoke(typeInstance, Array.Empty<object>())?.ToString(); });
+            var id = ServiceIdProvider.Instance.GetNextId(); 
+            ServiceManager.Instance.AddServiceRecord(id, new ServiceRecord { TypeInstance = typeInstance, MyType = myType, CancelToken = cancelToken });
 
         }
         catch(TypeLoadException e)
@@ -130,14 +84,7 @@ async Task<(object?, Type?, CancellationToken)> BuildServiceFromDescription(Serv
     // Get the type of a specified class.
     Type? myType = Type.GetType(description.AssemblyName ?? throw new NullReferenceException("Could not read Assembly Name"));
 
-    Console.WriteLine(description.ConstructorArgument.GetType());
-    Console.WriteLine(description.ConstructorArgument.Length);
-    Console.WriteLine(description.ConstructorArgument[0]);
-    Console.WriteLine(description.ConstructorArgument[0]?.GetType());
-    
     object? typeInstance = Activator.CreateInstance(myType ?? throw new NullReferenceException("Type turned out to be null"), description.ConstructorArgument);
-    //object typeInstance = Activator.CreateInstance(myType, new object[] {"Phrase", 3, 5});
-    //object typeInstance = Activator.CreateInstance(myType, new object[] {"Phrase"});
 
     MethodInfo? startMethod = myType.GetMethod("StartAsync");
 
@@ -148,4 +95,37 @@ async Task<(object?, Type?, CancellationToken)> BuildServiceFromDescription(Serv
     return (typeInstance, myType, cancelToken);
 }
 
-record PeriodicHostedServiceState(bool RequestTermination, ServiceDescription NewService);
+async Task<string> HandlePatchServiceRequest(PeriodicHostedServiceState state)
+{
+    if(state.NewService is not null)
+    {
+        (var typeInstance, var myType, var cancelToken) = await BuildServiceFromDescription(state.NewService);
+        var id = ServiceIdProvider.Instance.GetNextId(); 
+        ServiceManager.Instance.AddServiceRecord(id, new ServiceRecord { TypeInstance = typeInstance, MyType = myType, CancelToken = cancelToken });
+        return $"Service created with Id: {id}";
+    }
+
+    if(state.ServiceId is not null)
+    {
+        var serviceRequested = ServiceManager.Instance.GetServiceRecord((int)state.ServiceId);
+
+        if(state.RequestTermination)
+        {
+            MethodInfo? stopMethod = serviceRequested?.MyType?.GetMethod("StopAsync");
+            stopMethod?.Invoke(serviceRequested?.TypeInstance, new object[] {serviceRequested?.CancelToken});
+
+            return "Service terminated";
+        }
+        else
+        {
+            return $"Service Type: {serviceRequested?.TypeInstance?.GetType()}";
+        }
+
+    }
+
+    return "Nothing happened";
+}
+
+
+
+record PeriodicHostedServiceState(int? ServiceId, bool RequestTermination, ServiceDescription NewService);
