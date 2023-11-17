@@ -4,11 +4,11 @@ public class StutterService : BackgroundService
     private readonly int _stutterFaktor;
     private readonly int _interval;
 
-    public StutterService(string phrase, string stutterFaktor, string interval)
+    public StutterService(string phrase, int stutterFaktor, int interval)
     {
         this._phrase = phrase;
-        this._stutterFaktor = int.TryParse(stutterFaktor, out _ ) ?  int.Parse(stutterFaktor) : 5;
-        this._interval = int.TryParse(interval, out _ ) ?  int.Parse(interval) : 5;
+        this._stutterFaktor = stutterFaktor;
+        this._interval = interval;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

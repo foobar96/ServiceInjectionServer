@@ -30,7 +30,13 @@ if (app.Environment.IsDevelopment())
 }
 
 
-
+// Add Service examples:
+// curl --location --request PATCH 'http://localhost:5048/service' --header 'Content-Type: application/json' --data-raw '{"NewService": {"AssemblyName": "GreeterService", "ConstructorArguments": [{"StringValue": "Remote"}]}}'
+// curl --location --request PATCH 'http://localhost:5048/service' --header 'Content-Type: application/json' --data-raw '{"NewService": {"AssemblyName": "StutterService", "ConstructorArguments": [{"StringValue": "Hello"}, {"IntValue": 4}, {"IntValue": 1}]}}'
+// Terminate Service example:
+// curl --location --request PATCH 'http://localhost:5048/service' --header 'Content-Type: application/json' --data-raw '{"ServiceId": 0, "RequestTermination": true}'
+// Get service info example:
+// curl --location --request PATCH 'http://localhost:5048/service' --header 'Content-Type: application/json' --data-raw '{"ServiceId": 0}'
 app.MapMethods($"/service", new[] { "PATCH" }, async (
                 PeriodicHostedServiceState state
                 ) =>
@@ -84,7 +90,9 @@ async Task<(object?, Type?, CancellationToken)> BuildServiceFromDescription(Serv
     // Get the type of a specified class.
     Type? myType = Type.GetType(description.AssemblyName ?? throw new NullReferenceException("Could not read Assembly Name"));
 
-    object? typeInstance = Activator.CreateInstance(myType ?? throw new NullReferenceException("Type turned out to be null"), description.ConstructorArgument);
+    var constructorArray = UnpackConstructorArray(description.ConstructorArguments ?? Array.Empty<ConstructorArrayItem>());
+
+    object? typeInstance = Activator.CreateInstance(myType ?? throw new NullReferenceException("Type turned out to be null"), constructorArray);
 
     MethodInfo? startMethod = myType.GetMethod("StartAsync");
 
@@ -124,6 +132,33 @@ async Task<string> HandlePatchServiceRequest(PeriodicHostedServiceState state)
     }
 
     return "Nothing happened";
+}
+
+object[] UnpackConstructorArray(ConstructorArrayItem[] input)
+{
+    var result = new List<object>();
+
+    foreach(var elem in input)
+    {
+        if (elem.StringValue != null)
+        {
+            result.Add((string)elem.StringValue);
+        }
+        if (elem.IntValue != null)
+        {
+            result.Add((int)elem.IntValue);
+        }
+        if (elem.FloatValue != null)
+        {
+            result.Add((float)elem.FloatValue);
+        }
+        if (elem.BoolValue != null)
+        {
+            result.Add((bool)elem.BoolValue);
+        }
+    }
+
+    return result.ToArray();
 }
 
 
