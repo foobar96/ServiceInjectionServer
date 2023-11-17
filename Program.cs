@@ -1,4 +1,5 @@
 
+using System.Linq.Expressions;
 using System.Reflection;
 
 
@@ -16,12 +17,8 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-
-
-
 var app = builder.Build();
 
-await BuildBackgroundServicesFromAppSettings(app);
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
@@ -29,6 +26,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+await BuildBackgroundServicesFromAppSettings(app);
 
 // Add Service examples:
 // curl --location --request PATCH 'http://localhost:5048/service' --header 'Content-Type: application/json' --data-raw '{"NewService": {"AssemblyName": "GreeterService", "ConstructorArguments": [{"StringValue": "Remote"}]}}'
@@ -54,19 +52,31 @@ app.Run();
 
 
 
+/// <summary>
+/// Builds background services based on the configuration in appsettings.json.
+/// </summary>
+/// <param name="app">The WebApplication instance.</param>
 async Task BuildBackgroundServicesFromAppSettings(WebApplication app)
 {
+    // Retrieve the list of service descriptions from the configuration
+    var serviceArray = builder.Configuration.GetSection("Services").Get<List<ServiceDescription>>();
 
-    var arr = builder.Configuration.GetSection("Services").Get<List<ServiceDescription>>();
+    if(serviceArray is null)
+    {
+        Console.WriteLine("Could not retrieve array of services. Check your appsettings.json format");
+        return;
+    }
 
-    for(int i = 0; i < arr?.Count; i++)
+    // Iterate through each service description and build the corresponding service
+    foreach(var element in serviceArray)
     {
         
         try
         {
-            (var typeInstance, var myType, var cancelToken) = await BuildServiceFromDescription(arr[i]);
+            // Build the service instance from the description
+            (var typeInstance, var myType, var cancelToken) = await BuildServiceFromDescription(element);
 
-
+            // Generate a unique ID for the service and add it to the service manager
             var id = ServiceIdProvider.Instance.GetNextId(); 
             ServiceManager.Instance.AddServiceRecord(id, new ServiceRecord { TypeInstance = typeInstance, MyType = myType, CancelToken = cancelToken });
 
@@ -80,85 +90,96 @@ async Task BuildBackgroundServicesFromAppSettings(WebApplication app)
             Console.WriteLine(e.Message);
         }
 
-        // Have some offset with your task creation to avoid cpu spikes when executing logic
+        // Add a delay to avoid CPU spikes when executing logic
         await Task.Delay(TimeSpan.FromSeconds(0.1321f));
     }
 }
 
+/// <summary>
+/// Builds a service instance based on the provided ServiceDescription.
+/// </summary>
+/// <param name="description">The ServiceDescription containing the assembly name and constructor arguments.</param>
+/// <returns>A tuple containing the service instance, the service type, and the cancellation token.</returns>
 async Task<(object?, Type?, CancellationToken)> BuildServiceFromDescription(ServiceDescription description)
 {
-    // Get the type of a specified class.
-    Type? myType = Type.GetType(description.AssemblyName ?? throw new NullReferenceException("Could not read Assembly Name"));
+    // Check if the assembly name is provided
+    if (description.AssemblyName == null)
+        throw new NullReferenceException("Could not read Assembly Name");
 
+    // Get the service type based on the assembly name
+    Type? myType = Type.GetType(description.AssemblyName);
     var constructorArray = UnpackConstructorArray(description.ConstructorArguments ?? Array.Empty<ConstructorArrayItem>());
 
-    object? typeInstance = Activator.CreateInstance(myType ?? throw new NullReferenceException("Type turned out to be null"), constructorArray);
+    // Check if the service type is found
+    if (myType == null)
+        throw new NullReferenceException("Type turned out to be null");
 
+    // Create an instance of the service type and invoke the StartAsync method
+    object? typeInstance = Activator.CreateInstance(myType, constructorArray);
     MethodInfo? startMethod = myType.GetMethod("StartAsync");
 
+    // Create a cancellation token for the service
     var cancelToken = new CancellationToken();
-
-    object? result = startMethod?.Invoke(typeInstance, new object[] {cancelToken});
+    startMethod?.Invoke(typeInstance, new object[] {cancelToken});
 
     return (typeInstance, myType, cancelToken);
 }
 
+/// <summary>
+/// Handles the PATCH service request by either creating a new service or communicating with an existing one.
+/// </summary>
+/// <param name="state">The PeriodicHostedServiceState containing the service ID, termination request, and new service description.</param>
+/// <returns>A string indicating the result of the request.</returns>
 async Task<string> HandlePatchServiceRequest(PeriodicHostedServiceState state)
 {
+    // We only want to create a new service
     if(state.NewService is not null)
     {
-        (var typeInstance, var myType, var cancelToken) = await BuildServiceFromDescription(state.NewService);
+        // Build the new service and add it to the service manager
+        var (typeInstance, myType, cancelToken) = await BuildServiceFromDescription(state.NewService);
         var id = ServiceIdProvider.Instance.GetNextId(); 
         ServiceManager.Instance.AddServiceRecord(id, new ServiceRecord { TypeInstance = typeInstance, MyType = myType, CancelToken = cancelToken });
         return $"Service created with Id: {id}";
     }
 
-    if(state.ServiceId is not null)
-    {
-        var serviceRequested = ServiceManager.Instance.GetServiceRecord((int)state.ServiceId);
+    // Or communicate with an existing one...
+    if(state.ServiceId is null)
+        return "Nothing happened";
 
-        if(state.RequestTermination)
-        {
-            MethodInfo? stopMethod = serviceRequested?.MyType?.GetMethod("StopAsync");
-            stopMethod?.Invoke(serviceRequested?.TypeInstance, new object[] {serviceRequested?.CancelToken});
+    // Retrieve the requested service from the service manager
+    var serviceRequested = ServiceManager.Instance.GetServiceRecord((int)state.ServiceId);
 
-            return "Service terminated";
-        }
-        else
-        {
-            return $"Service Type: {serviceRequested?.TypeInstance?.GetType()}";
-        }
+    // We only want info on the service
+    if(!state.RequestTermination)
+        return $"Service Type: {serviceRequested?.TypeInstance?.GetType()}";
 
-    }
+    // Otherwise we want to terminate a service...
+    MethodInfo? stopMethod = serviceRequested?.MyType?.GetMethod("StopAsync");
+    stopMethod?.Invoke(serviceRequested?.TypeInstance, new object[] {serviceRequested?.CancelToken});
 
-    return "Nothing happened";
+    return "Service terminated";
 }
 
-object[] UnpackConstructorArray(ConstructorArrayItem[] input)
+/// <summary>
+/// Unpacks the constructor arguments from the ConstructorArrayItem array.
+/// </summary>
+/// <param name="input">The ConstructorArrayItem array.</param>
+/// <returns>An object array containing the unpacked constructor arguments.</returns>
+object?[] UnpackConstructorArray(ConstructorArrayItem[] input)
 {
-    var result = new List<object>();
-
-    foreach(var elem in input)
+    // Unpack each constructor argument from the array
+    return input.Select(elem =>
     {
         if (elem.StringValue != null)
-        {
-            result.Add((string)elem.StringValue);
-        }
+            return (object)elem.StringValue;
         if (elem.IntValue != null)
-        {
-            result.Add((int)elem.IntValue);
-        }
+            return (object)elem.IntValue;
         if (elem.FloatValue != null)
-        {
-            result.Add((float)elem.FloatValue);
-        }
+            return (object)elem.FloatValue;
         if (elem.BoolValue != null)
-        {
-            result.Add((bool)elem.BoolValue);
-        }
-    }
-
-    return result.ToArray();
+            return (object)elem.BoolValue;
+        return null;
+    }).Where(elem => elem != null).ToArray();
 }
 
 
