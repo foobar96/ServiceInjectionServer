@@ -1,0 +1,51 @@
+# For more info on HTTP files go to https://aka.ms/vs/httpfile
+@hostname=localhost
+@port=7169
+@host={{hostname}}:{{port}}
+
+# Get service info
+PATCH https://{{host}}/service
+Content-Type: application/json
+
+{
+    "ServiceId": 0
+}
+
+###
+
+# Terminate Service
+PATCH https://{{host}}/service
+Content-Type: application/json
+
+{
+    "ServiceId": 0,
+    "RequestTermination": true
+}
+
+###
+
+# Add GreeterService
+PATCH https://{{host}}/service
+Content-Type: application/json
+
+{
+    "NewService": {
+        "TypeName": "GreeterService",
+        "Parameters": [ "string:Remote" ]
+    }
+}
+
+###
+
+# Add StutterService
+PATCH https://{{host}}/service
+Content-Type: application/json
+
+{
+    "NewService": {
+        "TypeName": "StutterService",
+        "Parameters": [ "string:Hello", "int:4", "int:1" ]
+    }
+}
+
+###

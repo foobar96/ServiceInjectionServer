@@ -1,37 +1,53 @@
-public class ServiceManager
+using Microsoft.Extensions.Options;
+
+namespace settings_injection;
+
+public class ServiceManager : IHostedService
 {
-    private static ServiceManager? instance = null;
-    private static readonly object padlock = new object();
+    private readonly Dictionary<int, IHostedService> services = new();
+    private readonly ServiceIdProvider idProvider;
 
-    private Dictionary<int, ServiceRecord> serviceRecords = new Dictionary<int, ServiceRecord>();
-
-    ServiceManager()
+    public ServiceManager(IOptions<ServiceManagerOptions> options, ServiceIdProvider idProvider)
     {
-    }
+        this.idProvider = idProvider;
 
-    public static ServiceManager Instance
-    {
-        get
+        foreach (var description in  options.Value.ServiceDescriptions)
         {
-            lock (padlock)
-            {
-                if (instance == null)
-                {
-                    instance = new ServiceManager();
-                }
-                return instance;
-            }
+            var service = description.CreateInstance();
+            AddService(service);
         }
     }
 
-    public void AddServiceRecord(int key, ServiceRecord record)
+    public async Task StartAsync(CancellationToken cancellationToken)
     {
-        serviceRecords[key] = record;
+        await Task.WhenAll(services.Values.Select(s => s.StartAsync(cancellationToken)));
     }
 
-    public ServiceRecord? GetServiceRecord(int key)
+    public async Task StopAsync(CancellationToken cancellationToken)
     {
-        serviceRecords.TryGetValue(key, out ServiceRecord? record);
-        return record;
+        await Task.WhenAll(services.Values.Select(s => s.StopAsync(cancellationToken)));
+    }
+
+    public async Task<int> HostServiceAsync(IHostedService service, CancellationToken cancellationToken = default)
+    {
+        await service.StartAsync(cancellationToken);
+
+        var id = AddService(service);
+        
+        return id;
+    }
+
+    public IHostedService? GetService(int id)
+    {
+        services.TryGetValue(id, out IHostedService? service);
+        return service;
+    }
+
+    private int AddService(IHostedService service)
+    {
+        var id = idProvider.GetNextId();
+        services[id] = service;
+
+        return id;
     }
 }

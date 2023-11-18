@@ -1,27 +1,33 @@
+namespace settings_injection;
+
 public class StutterService : BackgroundService
 {
     private readonly string _phrase;
     private readonly int _stutterFaktor;
-    private readonly int _interval;
+    private readonly int _intervalSeconds;
 
-    public StutterService(string phrase, int stutterFaktor, int interval)
+    public StutterService(string phrase, int stutterFaktor, int intervalSeconds)
     {
-        this._phrase = phrase;
-        this._stutterFaktor = stutterFaktor;
-        this._interval = interval;
+        _phrase = phrase;
+        _stutterFaktor = stutterFaktor;
+        _intervalSeconds = intervalSeconds;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task ExecuteAsync(CancellationToken cancellationToken)
     {
-        while (!stoppingToken.IsCancellationRequested)
+        while (!cancellationToken.IsCancellationRequested)
         {
 
             char firstChar = _phrase[0];
             string stutteredString = new string(firstChar, _stutterFaktor) + _phrase;
             Console.WriteLine(stutteredString);
 
-            // Adjust the interval as needed
-            await Task.Delay(TimeSpan.FromSeconds(_interval), stoppingToken);
+            try
+            {
+                // Adjust the interval as needed
+                await Task.Delay(TimeSpan.FromSeconds(_intervalSeconds), cancellationToken);
+            }
+            catch (OperationCanceledException) { }
         }
     }
 }
